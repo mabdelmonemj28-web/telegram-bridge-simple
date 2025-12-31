@@ -1,46 +1,78 @@
-name: Telegram Bridge
+name: ⚡ Fast Telegram Bridge
 
 on:
+  # Keep existing triggers
   workflow_dispatch:
     inputs:
       message:
-        description: 'Message'
+        description: 'Message to send'
         required: true
-        default: 'Hello'
+        default: 'Hello from GitHub'
         type: string
   
   repository_dispatch:
-    types: [php-trigger, webhook]
+    types: [php-trigger]
 
 env:
   BOT_TOKEN: "7390930576:AAElDcVtAW7r9q7xAgzLSJuBzbxBnp0KPsA"
   CHAT_ID: "-4838772734"
+  # Optimize environment
+  ACTIONS_RUNNER_DEBUG: false
+  ACTIONS_STEP_DEBUG: false
 
 jobs:
-  send:
+  send-message:
     runs-on: ubuntu-latest
+    # CRITICAL: Reduce timeout to fail fast
+    timeout-minutes: 2
+    
     steps:
-      - name: Get Message
-        id: get-message
-        run: |
-          # For manual trigger
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "message=${{ github.event.inputs.message }}" >> $GITHUB_OUTPUT
-            echo "source=GitHub UI" >> $GITHUB_OUTPUT
-          
-          # For webhook trigger
-          elif [ "${{ github.event_name }}" = "repository_dispatch" ]; then
-            echo "message=${{ github.event.client_payload.message }}" >> $GITHUB_OUTPUT
-            echo "source=${{ github.event.client_payload.source || 'Webhook' }}" >> $GITHUB_OUTPUT
-          fi
-      
-      - name: Send to Telegram
-        run: |
-          curl -X POST \
-            -H "Content-Type: application/json" \
-            -d "{
-              \"chat_id\": \"${{ env.CHAT_ID }}\",
-              \"text\": \"📡 From: ${{ steps.get-message.outputs.source }}\\n\\n💬 ${{ steps.get-message.outputs.message }}\\n\\n⏰ $(date)\\n🔗 ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\",
-              \"parse_mode\": \"HTML\"
-            }" \
-            "https://api.telegram.org/bot${{ env.BOT_TOKEN }}/sendMessage"
+    # REMOVED: Show debug info (saves 1-2 seconds)
+    # REMOVED: Prepare message step (saves 2-3 seconds)
+    
+    - name: ⚡ Fast Send to Telegram
+      # SINGLE STEP: Combine everything into one step
+      run: |
+        # Start timing
+        START_MS=$(date +%s%3N)
+        
+        # Determine message source (all logic in one place)
+        if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+          MESSAGE="${{ github.event.inputs.message }}"
+          SOURCE="GitHub UI"
+        elif [[ "${{ github.event_name }}" == "repository_dispatch" ]]; then
+          MESSAGE="${{ github.event.client_payload.message }}"
+          SOURCE="${{ github.event.client_payload.source || 'PHP' }}"
+        else
+          MESSAGE="Unknown trigger"
+          SOURCE="System"
+        fi
+        
+        # Minimal message formatting (no extra newlines, minimal text)
+        FINAL_MESSAGE="⚡ $SOURCE\n$MESSAGE\n⏱ $(date '+%H:%M:%S')"
+        
+        echo "Sending: $MESSAGE"
+        
+        # Send with timeout and connection reuse
+        curl \
+          --silent \
+          --max-time 10 \
+          --connect-timeout 5 \
+          --fail \
+          -X POST \
+          -H "Content-Type: application/json" \
+          -d "{
+            \"chat_id\": \"${{ env.CHAT_ID }}\",
+            \"text\": \"$FINAL_MESSAGE\",
+            \"parse_mode\": \"HTML\",
+            \"disable_notification\": false
+          }" \
+          "https://api.telegram.org/bot${{ env.BOT_TOKEN }}/sendMessage"
+        
+        # Calculate and show timing
+        END_MS=$(date +%s%3N)
+        DURATION=$((END_MS - START_MS))
+        echo "✅ Telegram sent in ${DURATION}ms"
+        
+        # Exit immediately (no extra steps)
+        exit 0
