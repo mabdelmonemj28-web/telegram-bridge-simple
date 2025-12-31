@@ -17,6 +17,10 @@ on:
   # 3. ON PUSH (when you update code)
   push:
     branches: [ main ]
+  
+  # 4. PHP/WEBHOOK TRIGGER (NEW - for external calls)
+  repository_dispatch:
+    types: [php-trigger]
 
 env:
   BOT_TOKEN: "7390930576:AAElDcVtAW7r9q7xAgzLSJuBzbxBnp0KPsA"
@@ -33,29 +37,66 @@ jobs:
         echo "Event: ${{ github.event_name }}"
         echo "Actor: ${{ github.actor }}"
         echo "Repo: ${{ github.repository }}"
+        echo "Run ID: ${{ github.run_id }}"
+        
+        # Debug for repository_dispatch
+        if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
+          echo "Webhook Type: ${{ github.event.action }}"
+          echo "Client Payload:"
+          echo "${{ toJSON(github.event.client_payload) }}"
+        fi
         
     - name: Prepare message
       id: prepare
       run: |
+        echo "=== PREPARING MESSAGE ==="
+        
         if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          echo "Trigger: Manual from GitHub UI"
           echo "MESSAGE=${{ github.event.inputs.message }}" >> $GITHUB_OUTPUT
           echo "SOURCE=Manual from GitHub UI" >> $GITHUB_OUTPUT
+          
         elif [ "${{ github.event_name }}" = "schedule" ]; then
+          echo "Trigger: Daily Schedule"
           echo "MESSAGE=📅 Daily scheduled message from GitHub Actions" >> $GITHUB_OUTPUT
           echo "SOURCE=Daily Schedule" >> $GITHUB_OUTPUT
+          
         elif [ "${{ github.event_name }}" = "push" ]; then
+          echo "Trigger: Git Push"
           echo "MESSAGE=🚀 Code updated in repository" >> $GITHUB_OUTPUT
           echo "SOURCE=Git Push" >> $GITHUB_OUTPUT
+          
+        elif [ "${{ github.event_name }}" = "repository_dispatch" ]; then
+          echo "Trigger: PHP/Webhook"
+          MESSAGE="${{ github.event.client_payload.message }}"
+          SOURCE="${{ github.event.client_payload.source || 'PHP Webhook' }}"
+          
+          # If no message in payload, use default
+          if [ -z "$MESSAGE" ]; then
+            MESSAGE="Message from external webhook"
+          fi
+          
+          echo "Webhook Message: $MESSAGE"
+          echo "Webhook Source: $SOURCE"
+          
+          echo "MESSAGE=$MESSAGE" >> $GITHUB_OUTPUT
+          echo "SOURCE=$SOURCE" >> $GITHUB_OUTPUT
+          
         else
+          echo "Trigger: Unknown"
           echo "MESSAGE=Default message" >> $GITHUB_OUTPUT
           echo "SOURCE=Unknown" >> $GITHUB_OUTPUT
         fi
         
+        echo "Message prepared: ${{ steps.prepare.outputs.MESSAGE }}"
+        echo "Source: ${{ steps.prepare.outputs.SOURCE }}"
+    
     - name: Send to Telegram
       run: |
         MESSAGE="${{ steps.prepare.outputs.MESSAGE }}"
         SOURCE="${{ steps.prepare.outputs.SOURCE }}"
         
+        # Create final message
         FINAL_MESSAGE="🔄 $SOURCE\n\n"
         FINAL_MESSAGE+="📝 $MESSAGE\n\n"
         FINAL_MESSAGE+="👤 By: ${{ github.actor }}\n"
@@ -63,22 +104,42 @@ jobs:
         FINAL_MESSAGE+="🕒 Time: $(date '+%Y-%m-%d %H:%M:%S')\n"
         FINAL_MESSAGE+="🔗 GitHub Actions Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
         
-        echo "Sending: $FINAL_MESSAGE"
+        # Add webhook info if from repository_dispatch
+        if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
+          FINAL_MESSAGE+="\n🌐 Webhook ID: ${{ github.event.client_payload.webhook_id || 'N/A' }}"
+          FINAL_MESSAGE+="\n📡 From IP: ${{ github.event.client_payload.ip || 'Unknown' }}"
+        fi
+        
+        echo "=== SENDING TO TELEGRAM ==="
+        echo "Message length: ${#MESSAGE} characters"
         
         # Send to Telegram
-        curl -s -X POST \
+        RESPONSE=$(curl -s -X POST \
           -H "Content-Type: application/json" \
           -d "{
             \"chat_id\": \"${{ env.CHAT_ID }}\",
             \"text\": \"$FINAL_MESSAGE\",
-            \"parse_mode\": \"HTML\"
+            \"parse_mode\": \"HTML\",
+            \"disable_web_page_preview\": true
           }" \
-          "https://api.telegram.org/bot${{ env.BOT_TOKEN }}/sendMessage"
+          "https://api.telegram.org/bot${{ env.BOT_TOKEN }}/sendMessage")
         
-        echo "✅ Message sent to Telegram!"
+        echo "Telegram API Response:"
+        echo "$RESPONSE"
         
-    - name: Log success
+        # Check if successful
+        if echo "$RESPONSE" | grep -q '"ok":true'; then
+          echo "✅ SUCCESS! Message sent to Telegram"
+        else
+          echo "❌ FAILED! Telegram API error"
+          echo "Error details: $RESPONSE"
+          exit 1
+        fi
+        
+    - name: Log completion
+      if: always()
       run: |
-        echo "=== COMPLETED ==="
-        echo "Run ID: ${{ github.run_id }}"
+        echo "=== WORKFLOW COMPLETED ==="
+        echo "Status: ${{ job.status }}"
         echo "Run URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+        echo "Time: $(date)"
