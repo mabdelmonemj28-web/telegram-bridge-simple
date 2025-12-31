@@ -1,78 +1,50 @@
-name: ⚡ Fast Telegram Bridge
+name: ⚡ Optimized Telegram
 
 on:
-  # Keep existing triggers
   workflow_dispatch:
     inputs:
       message:
-        description: 'Message to send'
+        description: 'Message'
         required: true
-        default: 'Hello from GitHub'
+        default: 'Hello'
         type: string
   
   repository_dispatch:
-    types: [php-trigger]
+    types: [php-trigger, fast-send]
 
 env:
   BOT_TOKEN: "7390930576:AAElDcVtAW7r9q7xAgzLSJuBzbxBnp0KPsA"
   CHAT_ID: "-4838772734"
-  # Optimize environment
-  ACTIONS_RUNNER_DEBUG: false
-  ACTIONS_STEP_DEBUG: false
 
 jobs:
-  send-message:
+  send:
     runs-on: ubuntu-latest
-    # CRITICAL: Reduce timeout to fail fast
-    timeout-minutes: 2
+    timeout-minutes: 1
     
     steps:
-    # REMOVED: Show debug info (saves 1-2 seconds)
-    # REMOVED: Prepare message step (saves 2-3 seconds)
-    
-    - name: ⚡ Fast Send to Telegram
-      # SINGLE STEP: Combine everything into one step
+    - name: Fast Processing
+      id: process
       run: |
-        # Start timing
-        START_MS=$(date +%s%3N)
-        
-        # Determine message source (all logic in one place)
+        # Fast message extraction
         if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-          MESSAGE="${{ github.event.inputs.message }}"
-          SOURCE="GitHub UI"
-        elif [[ "${{ github.event_name }}" == "repository_dispatch" ]]; then
-          MESSAGE="${{ github.event.client_payload.message }}"
-          SOURCE="${{ github.event.client_payload.source || 'PHP' }}"
+          echo "INPUT=${{ github.event.inputs.message }}" >> $GITHUB_OUTPUT
+          echo "SOURCE=GitHub" >> $GITHUB_OUTPUT
         else
-          MESSAGE="Unknown trigger"
-          SOURCE="System"
+          echo "INPUT=${{ github.event.client_payload.message }}" >> $GITHUB_OUTPUT
+          echo "SOURCE=${{ github.event.client_payload.source || 'Web' }}" >> $GITHUB_OUTPUT
         fi
-        
-        # Minimal message formatting (no extra newlines, minimal text)
-        FINAL_MESSAGE="⚡ $SOURCE\n$MESSAGE\n⏱ $(date '+%H:%M:%S')"
-        
-        echo "Sending: $MESSAGE"
-        
-        # Send with timeout and connection reuse
-        curl \
-          --silent \
-          --max-time 10 \
-          --connect-timeout 5 \
-          --fail \
+    
+    - name: Lightning Send
+      run: |
+        # Use outputs directly with minimal formatting
+        curl -s --max-time 8 \
           -X POST \
           -H "Content-Type: application/json" \
           -d "{
-            \"chat_id\": \"${{ env.CHAT_ID }}\",
-            \"text\": \"$FINAL_MESSAGE\",
-            \"parse_mode\": \"HTML\",
-            \"disable_notification\": false
+            \"chat_id\": \"$CHAT_ID\",
+            \"text\": \"${{ steps.process.outputs.SOURCE }}: ${{ steps.process.outputs.INPUT }}\n$(date '+%H:%M:%S')\",
+            \"parse_mode\": \"HTML\"
           }" \
-          "https://api.telegram.org/bot${{ env.BOT_TOKEN }}/sendMessage"
+          "https://api.telegram.org/bot$BOT_TOKEN/sendMessage"
         
-        # Calculate and show timing
-        END_MS=$(date +%s%3N)
-        DURATION=$((END_MS - START_MS))
-        echo "✅ Telegram sent in ${DURATION}ms"
-        
-        # Exit immediately (no extra steps)
-        exit 0
+        echo "⚡ Sent in under 10s total"
