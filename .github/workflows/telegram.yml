@@ -1,0 +1,84 @@
+name: Send to Telegram
+
+on:
+  # 1. MANUAL TRIGGER (from GitHub UI)
+  workflow_dispatch:
+    inputs:
+      message:
+        description: 'Message to send'
+        required: true
+        default: 'Hello from GitHub'
+        type: string
+  
+  # 2. SCHEDULED (optional - daily at 9 AM)
+  schedule:
+    - cron: '0 9 * * *'
+  
+  # 3. ON PUSH (when you update code)
+  push:
+    branches: [ main ]
+
+env:
+  BOT_TOKEN: "7390930576:AAElDcVtAW7r9q7xAgzLSJuBzbxBnp0KPsA"
+  CHAT_ID: "-4838772734"
+
+jobs:
+  send-message:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Show debug info
+      run: |
+        echo "=== STARTING ==="
+        echo "Event: ${{ github.event_name }}"
+        echo "Actor: ${{ github.actor }}"
+        echo "Repo: ${{ github.repository }}"
+        
+    - name: Prepare message
+      id: prepare
+      run: |
+        if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          echo "MESSAGE=${{ github.event.inputs.message }}" >> $GITHUB_OUTPUT
+          echo "SOURCE=Manual from GitHub UI" >> $GITHUB_OUTPUT
+        elif [ "${{ github.event_name }}" = "schedule" ]; then
+          echo "MESSAGE=📅 Daily scheduled message from GitHub Actions" >> $GITHUB_OUTPUT
+          echo "SOURCE=Daily Schedule" >> $GITHUB_OUTPUT
+        elif [ "${{ github.event_name }}" = "push" ]; then
+          echo "MESSAGE=🚀 Code updated in repository" >> $GITHUB_OUTPUT
+          echo "SOURCE=Git Push" >> $GITHUB_OUTPUT
+        else
+          echo "MESSAGE=Default message" >> $GITHUB_OUTPUT
+          echo "SOURCE=Unknown" >> $GITHUB_OUTPUT
+        fi
+        
+    - name: Send to Telegram
+      run: |
+        MESSAGE="${{ steps.prepare.outputs.MESSAGE }}"
+        SOURCE="${{ steps.prepare.outputs.SOURCE }}"
+        
+        FINAL_MESSAGE="🔄 $SOURCE\n\n"
+        FINAL_MESSAGE+="📝 $MESSAGE\n\n"
+        FINAL_MESSAGE+="👤 By: ${{ github.actor }}\n"
+        FINAL_MESSAGE+="📦 Repo: ${{ github.repository }}\n"
+        FINAL_MESSAGE+="🕒 Time: $(date '+%Y-%m-%d %H:%M:%S')\n"
+        FINAL_MESSAGE+="🔗 GitHub Actions Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+        
+        echo "Sending: $FINAL_MESSAGE"
+        
+        # Send to Telegram
+        curl -s -X POST \
+          -H "Content-Type: application/json" \
+          -d "{
+            \"chat_id\": \"${{ env.CHAT_ID }}\",
+            \"text\": \"$FINAL_MESSAGE\",
+            \"parse_mode\": \"HTML\"
+          }" \
+          "https://api.telegram.org/bot${{ env.BOT_TOKEN }}/sendMessage"
+        
+        echo "✅ Message sent to Telegram!"
+        
+    - name: Log success
+      run: |
+        echo "=== COMPLETED ==="
+        echo "Run ID: ${{ github.run_id }}"
+        echo "Run URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
